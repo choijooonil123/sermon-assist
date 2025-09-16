@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Sermon Cue Assist — v3</title>
+  <title>Sermon Cue Assist — v4</title>
   <meta name="theme-color" content="#0b1020"/>
   <link rel="manifest" href="manifest.json"/>
   <link rel="icon" href="icons/icon-192.png" type="image/png"/>
@@ -61,7 +61,7 @@
     .head h2{ margin:0; font-size:16px; color:var(--muted) }
     .body{ flex:1; overflow:auto; }
 
-    /* LEFT: sentence buttons list */
+    /* LEFT: sentence editable buttons */
     .sentList{ padding:14px; display:flex; flex-direction:column; gap:8px; }
     .sentItem{ display:flex; align-items:center; gap:8px; }
     .num{ min-width:48px; text-align:right; color:var(--muted); font-size:12px; }
@@ -70,8 +70,11 @@
       border-radius:12px; padding:10px 12px;
       background:#0d1530; border:1px solid #1a2550; color:var(--ink);
       font-size:15px;
+      cursor:pointer;
+      outline:none;
     }
     .sentBtn:focus{ outline:1px solid #2a3b75; }
+    .sentBtn[contenteditable="true"]{ caret-color:#e8eeff; }
     .sentBtn.active{
       background:#12204a; border-color:#2a3b75;
       box-shadow: 0 0 0 2px rgba(42,59,117,0.35) inset;
@@ -86,16 +89,13 @@
     .prev{ font-size: clamp(16px, 2.2vw, 22px); opacity:0.85 }
     .curr{ font-size: clamp(24px, 4vw, 44px); background:#12204a; border-color:#2a3b75 }
     .next{ font-size: clamp(16px, 2.2vw, 22px); opacity:0.85 }
-
-    .kbd{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
-          font-size:12px; padding:2px 6px; border:1px solid #2a3b75; border-radius:6px; background:#0d1530; color:#cfe0ff; }
   </style>
 </head>
 <body>
   <header>
     <div class="bar">
       <div class="leftCtrls">
-        <h1>🎚️ Sermon Cue Assist · v3</h1>
+        <h1>🎚️ Sermon Cue Assist · v4</h1>
         <label class="pill">📄 원고 불러오기<input id="fileInput" type="file" accept=".txt,.md"/></label>
         <button class="pill" id="btnSample">샘플 원고</button>
       </div>
@@ -110,7 +110,7 @@
   <main class="layout">
     <!-- LEFT -->
     <section class="panel">
-      <div class="head"><h2>문장 리스트 (수정 가능)</h2><div class="muted">유사도 ≥ 30%일 때 하이라이트</div></div>
+      <div class="head"><h2>문장 버튼 (편집 가능)</h2><div class="muted">더블클릭 또는 포커스로 편집</div></div>
       <div class="body">
         <div id="sentList" class="sentList"></div>
       </div>

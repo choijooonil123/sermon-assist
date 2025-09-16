@@ -1,4 +1,4 @@
-/* v3 — Left: editable sentence buttons; Right: prev/curr/next; 30% similarity highlight */
+/* v4 — Left side sentences as editable 'buttons' (contenteditable). */
 (() => {
   const $ = (id)=>document.getElementById(id);
 
@@ -18,7 +18,6 @@
   let activeIdx = -1;
   let fuse = null;
 
-  // recognition
   let rec = null, listening = false, recent = "";
   const MAX_BUF = 260;
   const SIM_THRESHOLD = 0.30; // >= 30%
@@ -44,7 +43,7 @@
     fuse = new Fuse(sentences.map(s=>({idx:s.idx, text:s.norm})), {
       includeScore:true,
       keys:["text"],
-      threshold:0.7,       // allow fuzziness; we'll gate by similarity ourselves
+      threshold:0.7,
       minMatchCharLength:10,
       distance:300
     });
@@ -60,20 +59,48 @@
       num.className = "num"; num.textContent = (i+1).toString().padStart(2,"0");
       row.appendChild(num);
 
-      const input = document.createElement("input");
-      input.type = "text";
-      input.value = s.text;
-      input.className = "sentBtn";
-      input.dataset.idx = i;
-      input.addEventListener("input", (e)=>{
-        const val = e.target.value;
+      const btn = document.createElement("div");
+      btn.setAttribute("role","button");
+      btn.setAttribute("tabindex","0");
+      btn.setAttribute("contenteditable","true");
+      btn.className = "sentBtn";
+      btn.dataset.idx = i;
+      btn.textContent = s.text;
+
+      // Editing handlers
+      const commit = ()=>{
+        const val = btn.textContent.trim();
         sentences[i].text = val;
         sentences[i].norm = norm(val);
-        buildIndex(); // rebuild for live edits (small n, OK)
+        buildIndex();
+        if (activeIdx === i){ // update right pane text too
+          setActive(i);
+        }
+      };
+      btn.addEventListener("blur", commit);
+      btn.addEventListener("input", ()=>{/* live typing; we'll commit on blur */});
+      btn.addEventListener("keydown", (e)=>{
+        if (e.key === "Enter"){
+          e.preventDefault();
+          btn.blur(); // commit
+          const next = document.querySelector(`.sentBtn[data-idx="${i+1}"]`);
+          next && next.focus();
+        }
       });
-      input.addEventListener("focus", ()=> setActive(i,true));
-      row.appendChild(input);
 
+      // Focus selects and set active
+      btn.addEventListener("focus", ()=>{
+        setActive(i, true);
+        // place caret at end
+        const range = document.createRange();
+        range.selectNodeContents(btn);
+        range.collapse(false);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      });
+
+      row.appendChild(btn);
       sentList.appendChild(row);
     });
   }
