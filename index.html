@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Sermon Cue Assist</title>
+  <title>Sermon Cue Assist — Sentence Focus</title>
   <meta name="theme-color" content="#0b1020"/>
   <link rel="manifest" href="manifest.json"/>
   <link rel="icon" href="icons/icon-192.png" type="image/png"/>
@@ -29,15 +29,14 @@
       border-bottom:1px solid #1a2550;
     }
     .bar{
-      max-width:1200px; margin:0 auto; padding:10px 16px; display:flex; gap:12px; align-items:center;
+      max-width:1400px; margin:0 auto; padding:10px 16px; display:flex; gap:12px; align-items:center;
     }
     h1{font-size:18px; margin:0; letter-spacing:0.3px}
     .pill{
       display:inline-flex; align-items:center; gap:8px; padding:8px 12px; border-radius:999px;
-      background:var(--panel); border:1px solid #202a55; color:var(--ink); font-size:14px;
+      background:var(--panel); border:1px solid #202a55; color:var(--ink); font-size:14px; cursor:pointer;
     }
-    button.pill{ cursor:pointer; }
-    button.pill:hover{ outline:1px solid #2a3b75 }
+    .pill:hover{ outline:1px solid #2a3b75 }
     .pill .dot{ width:10px; height:10px; border-radius:50% }
     .ok{ background:var(--ok) }
     .rec{ background:#ff5f5f }
@@ -45,10 +44,10 @@
     .brand{ color:var(--brand) }
     .accent{ color:var(--accent) }
 
-    .layout{ max-width:1200px; margin:0 auto; padding:16px; display:grid; gap:16px;
+    .layout{ max-width:1400px; margin:0 auto; padding:16px; display:grid; gap:16px;
       grid-template-columns: 1fr; }
     @media (min-width: 980px){
-      .layout{ grid-template-columns: 1.1fr 0.9fr; }
+      .layout{ grid-template-columns: 1fr 1fr; }
     }
 
     .panel{
@@ -57,6 +56,7 @@
       border-radius:16px;
       box-shadow: 0 10px 30px rgba(0,0,0,0.25);
       overflow:hidden;
+      min-height: 60dvh;
     }
     .panel h2{ margin:0; font-size:16px; color:var(--muted); letter-spacing:0.2px; }
     .panel .head{ padding:12px 14px; border-bottom:1px solid #192046; display:flex; align-items:center; gap:10px; justify-content:space-between; }
@@ -69,27 +69,26 @@
       height: calc(100dvh - 170px); overflow:auto; padding:12px 10px;
       scroll-behavior: smooth;
     }
-    .script .seg{
-      padding:10px 12px; border-radius:12px; margin:6px 6px;
-      border:1px solid transparent;
-      line-height:1.6;
-      white-space:pre-wrap;
-    }
-    .script .seg small{ display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+    .seg{ padding:10px 12px; border-radius:12px; margin:6px 6px; line-height:1.7; border:1px solid transparent; }
+    .seg .title{ display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
     .seg.active{ background:linear-gradient(180deg, var(--hi), var(--hi2)); border-color:#2a3b75; }
-    .seg.active .badge{ background:var(--brand); color:#001637 }
-    .badge{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; background:#1a2240; color:#a5b8ff; }
+    .sentence{ padding:2px 3px; border-radius:6px; display:inline; }
+    .sentence.active{ background:#2a3b75; box-shadow:0 0 0 2px rgba(42,59,117,0.5) inset; }
+    .sentence + .sentence::before{ content:" "; }
 
-    .zoom{
-      height: calc(100dvh - 170px); overflow:auto; padding:20px 18px;
-    }
-    .zoom .big{
-      font-size: clamp(20px, 3.5vw, 36px);
-      line-height:1.7;
+    .rightWrap{ height: calc(100dvh - 170px); overflow:auto; padding:20px 18px; }
+    .rightTitle{ font-size:12px; color:var(--muted); margin-bottom:10px }
+    .focusBlock{ display:flex; flex-direction:column; gap:12px; }
+    .prev, .next, .curr{
       white-space:pre-wrap;
+      border-radius:14px;
+      padding:14px 16px;
+      background:#0d1530;
+      border:1px solid #1a2550;
     }
-    .zoom .title{ font-size:12px; color:var(--muted); margin-bottom:10px }
-    .ghost{ opacity:0.6; font-size:14px; color:var(--muted); margin-top:10px }
+    .prev{ font-size: clamp(16px, 2.1vw, 22px); opacity:0.8 }
+    .curr{ font-size: clamp(22px, 3.6vw, 40px); background:#12204a; border-color:#2a3b75 }
+    .next{ font-size: clamp(16px, 2.1vw, 22px); opacity:0.8 }
 
     .dropzone{
       border: 2px dashed #2a3b75; border-radius:14px; padding:18px; text-align:center; margin:12px;
@@ -98,9 +97,7 @@
     .dropzone.drag{ background:#12204a; }
     input[type=file]{ display:none }
 
-    .footer{
-      text-align:center; color:var(--muted); font-size:12px; padding:12px 0 26px;
-    }
+    .footer{ text-align:center; color:var(--muted); font-size:12px; padding:12px 0 26px; }
 
     .kbd{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
           font-size:12px; padding:2px 6px; border:1px solid #2a3b75; border-radius:6px; background:#0d1530; color:#cfe0ff; }
@@ -109,16 +106,12 @@
 <body>
   <header>
     <div class="bar">
-      <h1>🎚️ Sermon Cue Assist</h1>
+      <h1>🎚️ Sermon Cue Assist · Sentence Focus</h1>
       <div class="controls">
-        <label class="pill" id="fileLabel">
-          📄 원고 불러오기
-          <input id="fileInput" type="file" accept=".txt,.md,.docx"/>
-        </label>
+        <label class="pill" id="fileLabel">📄 원고 불러오기<input id="fileInput" type="file" accept=".txt,.md"/></label>
         <button class="pill" id="btnStart">🎙️ 듣기 시작</button>
         <button class="pill" id="btnStop">⏹️ 듣기 중지</button>
-        <button class="pill" id="btnCalib">🎯 현재 단락으로 보정</button>
-        <button class="pill" id="btnShowAll">🧾 전체 보기</button>
+        <button class="pill" id="btnCalib">🎯 현재로 보정</button>
         <span class="pill"><span class="dot" id="recDot"></span> <span id="recState">대기</span></span>
       </div>
     </div>
@@ -127,14 +120,14 @@
   <main class="layout">
     <section class="panel">
       <div class="head">
-        <h2>전체 설교문</h2>
-        <div class="muted">스크롤하거나 단락을 클릭하면 이동합니다.</div>
+        <h2>왼쪽: 원고 전체 + 현재 문장 하이라이트</h2>
+        <div class="muted">단락 클릭으로 이동, 문장 클릭으로도 이동. ↑/↓ 문장 이동, Space 시작/정지</div>
       </div>
       <div class="body">
         <div id="drop" class="dropzone">
           <div>여기로 <b>.txt</b> 또는 <b>.md</b> 원고를 끌어놓거나, 위에서 파일을 선택하세요.</div>
-          <div class="ghost">샘플 사용: <button class="pill" id="btnSample">sample-sermon.txt</button></div>
-          <div class="ghost">단락 기준: 빈 줄로 구분 / 줄 앞의 '#'은 섹션 제목으로 인식</div>
+          <div class="muted" style="margin-top:6px">섹션 제목은 줄 앞에 <code>#</code>, 문장 구분은 마침표/물음표/느낌표/종결부호로 자동 인식</div>
+          <div class="muted" style="margin-top:6px">샘플: <button class="pill" id="btnSample">sample-sermon.txt</button></div>
         </div>
         <div id="script" class="script"></div>
       </div>
@@ -142,14 +135,17 @@
 
     <section class="panel">
       <div class="head">
-        <h2>현재 구간(확대 표시)</h2>
-        <div class="muted">단축키 <span class="kbd">Space</span> 시작/정지, <span class="kbd">↑/↓</span> 이전/다음, <span class="kbd">C</span> 보정</div>
+        <h2>오른쪽: 현재 문장 중심으로 위/아래 문장 크게 표시</h2>
+        <div class="muted">문장 단위로 자동 동기화</div>
       </div>
       <div class="body">
-        <div class="zoom">
-          <div class="title" id="zoomTitle">대기 중</div>
-          <div class="big" id="zoomText">원고를 불러오고 <b>듣기 시작</b>을 누르세요.</div>
-          <div class="ghost" id="hint">음성 인식 결과를 원고와 대조하여 현재 위치를 찾아 크게 보여줍니다.</div>
+        <div class="rightWrap">
+          <div class="rightTitle" id="rightTitle">대기 중</div>
+          <div class="focusBlock">
+            <div class="prev" id="prevSent">이전 문장…</div>
+            <div class="curr" id="currSent">현재 문장…</div>
+            <div class="next" id="nextSent">다음 문장…</div>
+          </div>
         </div>
       </div>
     </section>
