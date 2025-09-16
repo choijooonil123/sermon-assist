@@ -1,2 +1,6 @@
-# Sermon Cue Assist — Sentence Focus
-Left shows full manuscript with current sentence highlighted. Right shows prev/current/next.
+# Sermon Cue Assist v3
+
+- 왼쪽: **모든 문장**을 **수정 가능한 입력 버튼**으로 나열
+- 오른쪽: **현재 문장 + 앞/뒤**를 크게 표시
+- 마이크 음성 인식 결과와 원고 문장 **퍼지 매칭**, **유사도 30% 이상**이면 현재 문장으로 하이라이트
+- PWA · GitHub Pages 배포 가능
