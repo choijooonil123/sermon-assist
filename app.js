@@ -1,4 +1,4 @@
-/* v4 — Left side sentences as editable 'buttons' (contenteditable). */
+/* v5 — better recognition + mic meter + equal-sized right pane slots */
 (() => {
   const $ = (id)=>document.getElementById(id);
 
@@ -8,6 +8,7 @@
   const btnStop = $("btnStop");
   const recDot = $("recDot");
   const recState = $("recState");
+  const meterFill = $("meterFill");
 
   const sentList = $("sentList");
   const prevEl = $("prevSent");
@@ -18,7 +19,9 @@
   let activeIdx = -1;
   let fuse = null;
 
+  // recognition + audio meter
   let rec = null, listening = false, recent = "";
+  let audioStream = null, audioCtx = null, analyser = null, dataArray = null;
   const MAX_BUF = 260;
   const SIM_THRESHOLD = 0.30; // >= 30%
 
@@ -49,6 +52,17 @@
     });
   }
 
+  function setActive(i){
+    if (i<0 || i>=sentences.length) return;
+    activeIdx = i;
+    document.querySelectorAll(".sentBtn").forEach(n=>n.classList.remove("active"));
+    const node = document.querySelector(`.sentBtn[data-idx="${i}"]`);
+    if (node){ node.classList.add("active"); node.scrollIntoView({block:"center"}); }
+    prevEl.textContent = sentences[i-1]?.text || "—";
+    currEl.textContent = sentences[i]?.text || "—";
+    nextEl.textContent = sentences[i+1]?.text || "—";
+  }
+
   function renderList(){
     sentList.innerHTML = "";
     sentences.forEach((s,i)=>{
@@ -67,56 +81,31 @@
       btn.dataset.idx = i;
       btn.textContent = s.text;
 
-      // Editing handlers
       const commit = ()=>{
         const val = btn.textContent.trim();
         sentences[i].text = val;
         sentences[i].norm = norm(val);
         buildIndex();
-        if (activeIdx === i){ // update right pane text too
-          setActive(i);
-        }
+        if (activeIdx === i){ setActive(i); }
       };
       btn.addEventListener("blur", commit);
-      btn.addEventListener("input", ()=>{/* live typing; we'll commit on blur */});
       btn.addEventListener("keydown", (e)=>{
         if (e.key === "Enter"){
-          e.preventDefault();
-          btn.blur(); // commit
+          e.preventDefault(); btn.blur();
           const next = document.querySelector(`.sentBtn[data-idx="${i+1}"]`);
           next && next.focus();
         }
       });
-
-      // Focus selects and set active
       btn.addEventListener("focus", ()=>{
-        setActive(i, true);
-        // place caret at end
-        const range = document.createRange();
-        range.selectNodeContents(btn);
-        range.collapse(false);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
+        setActive(i);
+        // move caret end
+        const range = document.createRange(); range.selectNodeContents(btn); range.collapse(false);
+        const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
       });
 
       row.appendChild(btn);
       sentList.appendChild(row);
     });
-  }
-
-  function setActive(i, fromUser=false){
-    if (i<0 || i>=sentences.length) return;
-    activeIdx = i;
-    document.querySelectorAll(".sentBtn").forEach(n=>n.classList.remove("active"));
-    const node = document.querySelector(`.sentBtn[data-idx="${i}"]`);
-    if (node){
-      node.classList.add("active");
-      node.scrollIntoView({block:"center"});
-    }
-    prevEl.textContent = sentences[i-1]?.text || "—";
-    currEl.textContent = sentences[i]?.text || "—";
-    nextEl.textContent = sentences[i+1]?.text || "—";
   }
 
   async function loadText(text){
@@ -126,8 +115,7 @@
     buildIndex();
     if (sentences.length){
       setActive(0);
-      const first = document.querySelector('.sentBtn[data-idx="0"]');
-      first && first.focus();
+      const first = document.querySelector('.sentBtn[data-idx="0"]'); first && first.focus();
     }
   }
 
@@ -143,36 +131,120 @@
   });
   btnSample.addEventListener("click", loadSample);
 
-  // Speech
+  // --------- Audio Meter ---------
+  function startMeter(){
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+      audioStream = stream;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const src = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      const bufferLength = analyser.frequencyBinCount;
+      dataArray = new Uint8Array(bufferLength);
+      src.connect(analyser);
+      const loop = ()=>{
+        if (!analyser) return;
+        analyser.getByteTimeDomainData(dataArray);
+        // compute RMS
+        let sum = 0;
+        for (let i=0;i<dataArray.length;i++){
+          const v = (dataArray[i]-128)/128;
+          sum += v*v;
+        }
+        const rms = Math.sqrt(sum/dataArray.length); // 0..1
+        const level = Math.min(100, Math.max(0, Math.round(rms*140))); // scale a bit
+        meterFill.style.width = level + "%";
+        requestAnimationFrame(loop);
+      };
+      loop();
+    }).catch(err => console.warn("meter getUserMedia error:", err));
+  }
+  function stopMeter(){
+    meterFill.style.width = "0%";
+    if (audioStream){ audioStream.getTracks().forEach(t=>t.stop()); audioStream=null; }
+    if (audioCtx){ audioCtx.close(); audioCtx=null; }
+    analyser=null; dataArray=null;
+  }
+
+  // --------- Recognition with grammar bias ---------
   function supported(){ return ('webkitSpeechRecognition' in window) || ('SpeechRecognition' in window); }
   function getRec(){
     const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Ctor) return null;
     const r = new Ctor();
-    r.lang = "ko-KR"; r.continuous=true; r.interimResults=true;
+    r.lang = "ko-KR";
+    r.continuous = true;
+    r.interimResults = true;
+    r.maxAlternatives = 3;
+    // Grammar bias (WebKit only)
+    const GList = window.SpeechGrammarList || window.webkitSpeechGrammarList;
+    if (GList && sentences.length){
+      const gl = new GList();
+      // Build JSGF with top-N sentences (length-limited to keep grammar manageable)
+      const items = sentences.slice(0, 200).map(s=>s.text.replace(/[;|]/g," "));
+      const jsgf = "#JSGF V1.0; grammar sermon; public <line> = " + items.join(" | ") + " ;";
+      gl.addFromString(jsgf, 1);
+      r.grammars = gl;
+    }
     return r;
   }
-  function updRecState(){ recDot.className = "dot " + (listening? "rec":"ok"); recState.textContent = listening? "듣는 중":"대기"; }
+  function updRecState(){
+    recDot.className = "dot " + (listening? "rec":"ok");
+    recState.textContent = listening? "듣는 중":"대기";
+  }
+
+  // Extra similarity: bigram Dice coefficient
+  function diceSimilarity(a,b){
+    const A = ngrams(a,2), B = ngrams(b,2);
+    if (!A.size || !B.size) return 0;
+    let overlap = 0;
+    A.forEach(x=>{ if (B.has(x)) overlap++; });
+    return (2*overlap) / (A.size + B.size);
+  }
+  function ngrams(str, n){
+    str = str.replace(/\s+/g," ");
+    const set = new Set();
+    for (let i=0;i<str.length-(n-1);i++){
+      set.add(str.slice(i,i+n));
+    }
+    return set;
+  }
+
+  function combineSimilarity(fuseScore, dice){
+    const fuseSim = 1 - (fuseScore ?? 1);
+    // Weighted: 0.6 Fuse + 0.4 Dice
+    return 0.6*fuseSim + 0.4*dice;
+  }
 
   function start(){
     if (!supported()){ alert("이 브라우저는 Web Speech API를 지원하지 않습니다. Chrome을 권장합니다."); return; }
     if (!rec) rec = getRec(); if (!rec) return;
-    listening = true; recent=""; updRecState();
+    listening = true; recent=""; updRecState(); startMeter();
     rec.onresult = (evt)=>{
       let chunk="";
-      for (let i=evt.resultIndex;i<evt.results.length;i++){ const r=evt.results[i]; chunk += (r[0]?.transcript||""); }
+      for (let i=evt.resultIndex;i<evt.results.length;i++){
+        const r=evt.results[i];
+        // prefer final alt if exists
+        const bestAlt = r[0]?.transcript || "";
+        chunk += bestAlt;
+      }
       chunk = chunk.trim(); if (!chunk || !sentences.length) return;
       recent = (recent + " " + chunk).slice(-MAX_BUF);
       if (recent.length > 40 && fuse){
-        const q = norm(recent).slice(-60);
+        const q = norm(recent).slice(-70);
         const res = fuse.search(q).slice(0,3);
         if (res.length){
-          res.sort((a,b)=> (a.score??1) - (b.score??1));
+          // re-rank with Dice similarity
+          res.forEach(item=>{
+            const sentText = sentences[item.item.idx].norm;
+            item._dice = diceSimilarity(q, sentText);
+            item._combo = combineSimilarity(item.score, item._dice);
+          });
+          res.sort((a,b)=> b._combo - a._combo);
           const best = res[0];
-          const sim = 1 - (best.score ?? 1);
-          if (sim >= 0.30){
-            const idx = best.item.idx;
-            setActive(idx);
+          if (best && best._combo >= SIM_THRESHOLD){
+            setActive(best.item.idx);
           }
         }
       }
@@ -181,15 +253,18 @@
     rec.onerror = (e)=> console.warn("rec error:", e);
     try{ rec.start(); }catch(e){ console.warn(e); }
   }
-  function stop(){ listening=false; updRecState(); try{ rec&&rec.stop(); }catch{} }
+  function stop(){
+    listening=false; updRecState(); stopMeter();
+    try{ rec&&rec.stop(); }catch{}
+  }
 
   btnStart.addEventListener("click", start);
   btnStop.addEventListener("click", stop);
 
   window.addEventListener("keydown",(e)=>{
     if (e.code==="Space"){ e.preventDefault(); listening? stop(): start(); }
-    else if (e.code==="ArrowDown"){ if (activeIdx+1 < sentences.length) setActive(activeIdx+1, true); }
-    else if (e.code==="ArrowUp"){ if (activeIdx-1 >= 0) setActive(activeIdx-1, true); }
+    else if (e.code==="ArrowDown"){ if (activeIdx+1 < sentences.length) setActive(activeIdx+1); }
+    else if (e.code==="ArrowUp"){ if (activeIdx-1 >= 0) setActive(activeIdx-1); }
   });
 
   // PWA

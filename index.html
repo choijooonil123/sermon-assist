@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Sermon Cue Assist — v4</title>
+  <title>Sermon Cue Assist — v5</title>
   <meta name="theme-color" content="#0b1020"/>
   <link rel="manifest" href="manifest.json"/>
   <link rel="icon" href="icons/icon-192.png" type="image/png"/>
@@ -40,9 +40,17 @@
     .pill:hover{ outline:1px solid #2a3b75 }
     .pill .dot{ width:10px; height:10px; border-radius:50% }
     .ok{ background:var(--ok) }
-    .rec{ background:#ff5f5f }
+    .rec{ background:#ff5f5f; animation:pulse 1.2s infinite ease-in-out; }
+    @keyframes pulse { 0%{opacity:0.4} 50%{opacity:1} 100%{opacity:0.4} }
     .muted{ color:var(--muted) }
     input[type=file]{ display:none }
+
+    /* Mic level meter */
+    .meterWrap{ display:flex; align-items:center; gap:6px; }
+    .meter{
+      width:140px; height:10px; border-radius:999px; background:#0d1530; border:1px solid #203063; overflow:hidden;
+    }
+    .meter .fill{ height:100%; width:0%; background:linear-gradient(90deg, #5aa3ff, #a076ff); }
 
     .layout{
       max-width:1600px; margin:0 auto; padding:16px; display:grid; gap:16px;
@@ -80,29 +88,32 @@
       box-shadow: 0 0 0 2px rgba(42,59,117,0.35) inset;
     }
 
-    /* RIGHT: prev/curr/next big */
+    /* RIGHT: prev/curr/next same big size */
     .rightWrap{ padding:20px; display:flex; flex-direction:column; gap:12px; }
-    .prev, .curr, .next{
-      white-space:pre-wrap; border-radius:14px; padding:16px 18px;
-      background:#0d1530; border:1px solid #1a2550;
+    .slot{
+      white-space:pre-wrap; border-radius:14px; padding:20px 22px;
+      background:#0d1530; border:2px solid #1a2550;
+      font-size: clamp(24px, 4vw, 44px);
     }
-    .prev{ font-size: clamp(16px, 2.2vw, 22px); opacity:0.85 }
-    .curr{ font-size: clamp(24px, 4vw, 44px); background:#12204a; border-color:#2a3b75 }
-    .next{ font-size: clamp(16px, 2.2vw, 22px); opacity:0.85 }
+    .slot.current{ border-color:#2a3b75; background:#12204a; }
+
   </style>
 </head>
 <body>
   <header>
     <div class="bar">
       <div class="leftCtrls">
-        <h1>🎚️ Sermon Cue Assist · v4</h1>
+        <h1>🎚️ Sermon Cue Assist · v5</h1>
         <label class="pill">📄 원고 불러오기<input id="fileInput" type="file" accept=".txt,.md"/></label>
         <button class="pill" id="btnSample">샘플 원고</button>
       </div>
       <div class="rightCtrls">
+        <div class="meterWrap">
+          <span class="pill"><span class="dot" id="recDot"></span><span id="recState" class="muted">대기</span></span>
+          <div class="meter"><div id="meterFill" class="fill"></div></div>
+        </div>
         <button class="pill" id="btnStart">🎙️ 듣기 시작</button>
         <button class="pill" id="btnStop">⏹️ 듣기 중지</button>
-        <span class="pill"><span class="dot" id="recDot"></span><span id="recState" class="muted">대기</span></span>
       </div>
     </div>
   </header>
@@ -118,12 +129,12 @@
 
     <!-- RIGHT -->
     <section class="panel">
-      <div class="head"><h2>현재 문장 + 앞/뒤</h2><div class="muted">Space 시작/정지 · ↑/↓ 이동</div></div>
+      <div class="head"><h2>현재 문장 + 앞/뒤 (동일 크기)</h2><div class="muted">Space 시작/정지 · ↑/↓ 이동</div></div>
       <div class="body">
         <div class="rightWrap">
-          <div class="prev" id="prevSent">—</div>
-          <div class="curr" id="currSent">원고를 불러오세요.</div>
-          <div class="next" id="nextSent">—</div>
+          <div class="slot" id="prevSent">—</div>
+          <div class="slot current" id="currSent">원고를 불러오세요.</div>
+          <div class="slot" id="nextSent">—</div>
         </div>
       </div>
     </section>
