@@ -1,4 +1,4 @@
-/* v5 — better recognition + mic meter + equal-sized right pane slots */
+/* v5.1 — Fuse light build fix + right pane order (current, next, next2) */
 (() => {
   const $ = (id)=>document.getElementById(id);
 
@@ -11,13 +11,13 @@
   const meterFill = $("meterFill");
 
   const sentList = $("sentList");
-  const prevEl = $("prevSent");
   const currEl = $("currSent");
   const nextEl = $("nextSent");
+  const next2El = $("next2Sent");
 
   let sentences = []; // [{idx,text,norm}]
   let activeIdx = -1;
-  let fuse = null;
+  let fuse = null; // Fuse over array of strings (norm text)
 
   // recognition + audio meter
   let rec = null, listening = false, recent = "";
@@ -43,9 +43,9 @@
   }
 
   function buildIndex(){
-    fuse = new Fuse(sentences.map(s=>({idx:s.idx, text:s.norm})), {
+    const data = sentences.map(s=>s.norm);
+    fuse = new Fuse(data, {
       includeScore:true,
-      keys:["text"],
       threshold:0.7,
       minMatchCharLength:10,
       distance:300
@@ -58,9 +58,9 @@
     document.querySelectorAll(".sentBtn").forEach(n=>n.classList.remove("active"));
     const node = document.querySelector(`.sentBtn[data-idx="${i}"]`);
     if (node){ node.classList.add("active"); node.scrollIntoView({block:"center"}); }
-    prevEl.textContent = sentences[i-1]?.text || "—";
     currEl.textContent = sentences[i]?.text || "—";
     nextEl.textContent = sentences[i+1]?.text || "—";
+    next2El.textContent = sentences[i+2]?.text || "—";
   }
 
   function renderList(){
@@ -98,7 +98,6 @@
       });
       btn.addEventListener("focus", ()=>{
         setActive(i);
-        // move caret end
         const range = document.createRange(); range.selectNodeContents(btn); range.collapse(false);
         const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
       });
@@ -146,14 +145,13 @@
       const loop = ()=>{
         if (!analyser) return;
         analyser.getByteTimeDomainData(dataArray);
-        // compute RMS
         let sum = 0;
         for (let i=0;i<dataArray.length;i++){
           const v = (dataArray[i]-128)/128;
           sum += v*v;
         }
-        const rms = Math.sqrt(sum/dataArray.length); // 0..1
-        const level = Math.min(100, Math.max(0, Math.round(rms*140))); // scale a bit
+        const rms = Math.sqrt(sum/dataArray.length);
+        const level = Math.min(100, Math.max(0, Math.round(rms*140)));
         meterFill.style.width = level + "%";
         requestAnimationFrame(loop);
       };
@@ -177,11 +175,10 @@
     r.continuous = true;
     r.interimResults = true;
     r.maxAlternatives = 3;
-    // Grammar bias (WebKit only)
+
     const GList = window.SpeechGrammarList || window.webkitSpeechGrammarList;
     if (GList && sentences.length){
       const gl = new GList();
-      // Build JSGF with top-N sentences (length-limited to keep grammar manageable)
       const items = sentences.slice(0, 200).map(s=>s.text.replace(/[;|]/g," "));
       const jsgf = "#JSGF V1.0; grammar sermon; public <line> = " + items.join(" | ") + " ;";
       gl.addFromString(jsgf, 1);
@@ -194,7 +191,6 @@
     recState.textContent = listening? "듣는 중":"대기";
   }
 
-  // Extra similarity: bigram Dice coefficient
   function diceSimilarity(a,b){
     const A = ngrams(a,2), B = ngrams(b,2);
     if (!A.size || !B.size) return 0;
@@ -205,29 +201,26 @@
   function ngrams(str, n){
     str = str.replace(/\s+/g," ");
     const set = new Set();
-    for (let i=0;i<str.length-(n-1);i++){
-      set.add(str.slice(i,i+n));
-    }
+    for (let i=0;i<str.length-(n-1);i++){ set.add(str.slice(i,i+n)); }
     return set;
   }
-
   function combineSimilarity(fuseScore, dice){
     const fuseSim = 1 - (fuseScore ?? 1);
-    // Weighted: 0.6 Fuse + 0.4 Dice
     return 0.6*fuseSim + 0.4*dice;
   }
 
   function start(){
-    if (!supported()){ alert("이 브라우저는 Web Speech API를 지원하지 않습니다. Chrome을 권장합니다."); return; }
+    if (!supported()){
+      alert("이 브라우저는 Web Speech API를 지원하지 않습니다. Chrome을 권장합니다.");
+      return;
+    }
     if (!rec) rec = getRec(); if (!rec) return;
     listening = true; recent=""; updRecState(); startMeter();
     rec.onresult = (evt)=>{
       let chunk="";
       for (let i=evt.resultIndex;i<evt.results.length;i++){
         const r=evt.results[i];
-        // prefer final alt if exists
-        const bestAlt = r[0]?.transcript || "";
-        chunk += bestAlt;
+        chunk += (r[0]?.transcript || "");
       }
       chunk = chunk.trim(); if (!chunk || !sentences.length) return;
       recent = (recent + " " + chunk).slice(-MAX_BUF);
@@ -235,22 +228,26 @@
         const q = norm(recent).slice(-70);
         const res = fuse.search(q).slice(0,3);
         if (res.length){
-          // re-rank with Dice similarity
+          // Map back using refIndex; res[i].item is string
           res.forEach(item=>{
-            const sentText = sentences[item.item.idx].norm;
-            item._dice = diceSimilarity(q, sentText);
-            item._combo = combineSimilarity(item.score, item._dice);
+            const idx = item.refIndex;
+            const dice = diceSimilarity(q, sentences[idx].norm);
+            item._combo = combineSimilarity(item.score, dice);
+            item._idx = idx;
           });
           res.sort((a,b)=> b._combo - a._combo);
           const best = res[0];
           if (best && best._combo >= SIM_THRESHOLD){
-            setActive(best.item.idx);
+            setActive(best._idx);
           }
         }
       }
     };
     rec.onend = ()=>{ if (listening){ try{ rec.start(); }catch{} } };
-    rec.onerror = (e)=> console.warn("rec error:", e);
+    rec.onerror = (e)=> {
+      console.warn("rec error:", e);
+      alert("음성 인식 오류가 발생했습니다: " + (e.error || "알 수 없음") + "\\n브라우저 권한과 HTTPS 접속을 확인하세요.");
+    };
     try{ rec.start(); }catch(e){ console.warn(e); }
   }
   function stop(){
