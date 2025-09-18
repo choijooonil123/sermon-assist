@@ -108,6 +108,13 @@
         <button class="pill" id="btnSample">샘플 원고</button>
       </div>
       <div class="rightCtrls">
+                <!-- NEW: 마이크 선택 -->
+        <label class="pill">
+          🎤 마이크
+          <select id="micSelect" style="background:transparent;border:none;color:var(--ink);outline:none;">
+            <option>Loading...</option>
+          </select>
+        </label>
         <div class="meterWrap">
           <span class="pill"><span class="dot" id="recDot"></span><span id="recState" class="muted">대기</span></span>
           <div class="meter"><div id="meterFill" class="fill"></div></div>
