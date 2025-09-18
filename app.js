@@ -1,7 +1,13 @@
-/* v5.1 — Fuse light build fix + right pane order (current, next, next2) */
+/* v5.2 — Mic device picker + pro audio constraints + meter from selected device
+   사용법:
+   1) HTML 헤더 오른쪽 컨트롤에 <select id="micSelect"> 1줄 추가
+   2) 이 파일로 app.js 교체
+   3) 크롬 주소창 🔒 → 마이크에서 동일 장치 선택(웹스피치용)
+   4) OBS/Zoom에서도 같은 장치를 마이크로 지정하면 동시 수음 가능 */
 (() => {
   const $ = (id)=>document.getElementById(id);
 
+  // --- UI refs ---
   const fileInput = $("fileInput");
   const btnSample = $("btnSample");
   const btnStart = $("btnStart");
@@ -15,6 +21,10 @@
   const nextEl = $("nextSent");
   const next2El = $("next2Sent");
 
+  // NEW: mic device selector (HTML에 <select id="micSelect"> 추가 필요)
+  const micSelect = $("micSelect");
+
+  // --- State ---
   let sentences = []; // [{idx,text,norm}]
   let activeIdx = -1;
   let fuse = null; // Fuse over array of strings (norm text)
@@ -22,9 +32,12 @@
   // recognition + audio meter
   let rec = null, listening = false, recent = "";
   let audioStream = null, audioCtx = null, analyser = null, dataArray = null;
+  let currentDeviceId = null;
+
   const MAX_BUF = 260;
   const SIM_THRESHOLD = 0.30; // >= 30%
 
+  // --- Utils ---
   const norm = (s)=> (s||"").toLowerCase()
     .replace(/[^\p{Script=Hangul}a-z0-9\s]/gu," ")
     .replace(/\s+/g," ")
@@ -130,12 +143,68 @@
   });
   btnSample.addEventListener("click", loadSample);
 
-  // --------- Audio Meter ---------
-  function startMeter(){
-    if (!navigator.mediaDevices?.getUserMedia) return;
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+  // ---------- Device picker ----------
+  async function ensurePermission(){
+    // 첫 1회 권한 요청(라벨 표시를 위해)
+    try {
+      const tmp = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      tmp.getTracks().forEach(t=>t.stop());
+    } catch(e) {
+      console.warn("Permission error (labels may be hidden):", e);
+    }
+  }
+
+  async function listMics(){
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const mics = devices.filter(d=>d.kind === "audioinput");
+
+    const prev = micSelect?.value || currentDeviceId || "";
+
+    if (micSelect){
+      micSelect.innerHTML = "";
+      mics.forEach(d=>{
+        const opt = document.createElement("option");
+        opt.value = d.deviceId;
+        opt.textContent = d.label || `마이크(${d.deviceId.slice(0,6)}…)`;
+        micSelect.appendChild(opt);
+      });
+      const exists = mics.some(m=>m.deviceId === prev);
+      micSelect.value = exists ? prev : (mics[0]?.deviceId || "");
+    }
+
+    currentDeviceId = (micSelect && micSelect.value) ? micSelect.value : null;
+  }
+
+  micSelect?.addEventListener("change", async ()=>{
+    currentDeviceId = micSelect.value || null;
+    await restartMeter();
+  });
+
+  navigator.mediaDevices?.addEventListener?.("devicechange", async ()=>{
+    await listMics();
+  });
+
+  // --------- Audio Meter from chosen device ---------
+  const proConstraints = (deviceId)=>({
+    audio: {
+      deviceId: deviceId ? { exact: deviceId } : undefined,
+      channelCount: 1,
+      sampleRate: 48000,
+      sampleSize: 16,
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false
+    },
+    video: false
+  });
+
+  async function startMeter(){
+    try{
+      stopMeter();
+      const stream = await navigator.mediaDevices.getUserMedia(proConstraints(currentDeviceId));
       audioStream = stream;
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
       const src = audioCtx.createMediaStreamSource(stream);
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 256;
@@ -156,12 +225,21 @@
         requestAnimationFrame(loop);
       };
       loop();
-    }).catch(err => console.warn("meter getUserMedia error:", err));
+    }catch(err){
+      console.warn("meter getUserMedia error:", err);
+      alert("오디오 장치 열기 실패: " + (err.message || err));
+    }
   }
+
+  async function restartMeter(){
+    stopMeter();
+    await startMeter();
+  }
+
   function stopMeter(){
     meterFill.style.width = "0%";
     if (audioStream){ audioStream.getTracks().forEach(t=>t.stop()); audioStream=null; }
-    if (audioCtx){ audioCtx.close(); audioCtx=null; }
+    if (audioCtx){ try{ audioCtx.close(); }catch{} audioCtx=null; }
     analyser=null; dataArray=null;
   }
 
@@ -186,9 +264,17 @@
     }
     return r;
   }
+
   function updRecState(){
     recDot.className = "dot " + (listening? "rec":"ok");
     recState.textContent = listening? "듣는 중":"대기";
+  }
+
+  function ngrams(str, n){
+    str = str.replace(/\s+/g," ");
+    const set = new Set();
+    for (let i=0;i<str.length-(n-1);i++){ set.add(str.slice(i,i+n)); }
+    return set;
   }
 
   function diceSimilarity(a,b){
@@ -198,12 +284,7 @@
     A.forEach(x=>{ if (B.has(x)) overlap++; });
     return (2*overlap) / (A.size + B.size);
   }
-  function ngrams(str, n){
-    str = str.replace(/\s+/g," ");
-    const set = new Set();
-    for (let i=0;i<str.length-(n-1);i++){ set.add(str.slice(i,i+n)); }
-    return set;
-  }
+
   function combineSimilarity(fuseScore, dice){
     const fuseSim = 1 - (fuseScore ?? 1);
     return 0.6*fuseSim + 0.4*dice;
@@ -215,7 +296,10 @@
       return;
     }
     if (!rec) rec = getRec(); if (!rec) return;
-    listening = true; recent=""; updRecState(); startMeter();
+
+    listening = true; recent=""; updRecState();
+    startMeter(); // meter uses selected device
+
     rec.onresult = (evt)=>{
       let chunk="";
       for (let i=evt.resultIndex;i<evt.results.length;i++){
@@ -223,12 +307,12 @@
         chunk += (r[0]?.transcript || "");
       }
       chunk = chunk.trim(); if (!chunk || !sentences.length) return;
+
       recent = (recent + " " + chunk).slice(-MAX_BUF);
       if (recent.length > 40 && fuse){
         const q = norm(recent).slice(-70);
         const res = fuse.search(q).slice(0,3);
         if (res.length){
-          // Map back using refIndex; res[i].item is string
           res.forEach(item=>{
             const idx = item.refIndex;
             const dice = diceSimilarity(q, sentences[idx].norm);
@@ -243,18 +327,23 @@
         }
       }
     };
+
     rec.onend = ()=>{ if (listening){ try{ rec.start(); }catch{} } };
+
     rec.onerror = (e)=> {
       console.warn("rec error:", e);
-      alert("음성 인식 오류가 발생했습니다: " + (e.error || "알 수 없음") + "\\n브라우저 권한과 HTTPS 접속을 확인하세요.");
+      alert("음성 인식 오류가 발생했습니다: " + (e.error || "알 수 없음") + "\n브라우저 권한과 HTTPS 접속을 확인하세요.");
     };
+
     try{ rec.start(); }catch(e){ console.warn(e); }
   }
+
   function stop(){
     listening=false; updRecState(); stopMeter();
     try{ rec&&rec.stop(); }catch{}
   }
 
+  // --- Events ---
   btnStart.addEventListener("click", start);
   btnStop.addEventListener("click", stop);
 
@@ -272,4 +361,15 @@
         .catch(e=>console.warn("[SW] fail:", e));
     });
   }
+
+  // --- Boot ---
+  (async ()=>{
+    try {
+      await ensurePermission();
+      await listMics();
+    } catch(e) {
+      console.warn(e);
+    }
+  })();
+
 })();
