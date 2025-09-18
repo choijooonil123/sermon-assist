@@ -1,9 +1,4 @@
-/* v5.2 — Mic device picker + pro audio constraints + meter from selected device
-   사용법:
-   1) HTML 헤더 오른쪽 컨트롤에 <select id="micSelect"> 1줄 추가
-   2) 이 파일로 app.js 교체
-   3) 크롬 주소창 🔒 → 마이크에서 동일 장치 선택(웹스피치용)
-   4) OBS/Zoom에서도 같은 장치를 마이크로 지정하면 동시 수음 가능 */
+/* v5.2 — Mic device picker + pro audio constraints + SpeechRecognition + TTS */
 (() => {
   const $ = (id)=>document.getElementById(id);
 
@@ -21,21 +16,32 @@
   const nextEl = $("nextSent");
   const next2El = $("next2Sent");
 
-  // NEW: mic device selector (HTML에 <select id="micSelect"> 추가 필요)
   const micSelect = $("micSelect");
 
-  // --- State ---
-  let sentences = []; // [{idx,text,norm}]
-  let activeIdx = -1;
-  let fuse = null; // Fuse over array of strings (norm text)
+  // === TTS refs ===
+  const voiceSelect = $("voiceSelect");
+  const rateRange = $("rateRange");
+  const rateVal = $("rateVal");
+  const btnSpeakCurrent = $("btnSpeakCurrent");
+  const btnSpeakAll = $("btnSpeakAll");
+  const btnTtsPause = $("btnTtsPause");
+  const btnTtsResume = $("btnTtsResume");
+  const btnTtsStop = $("btnTtsStop");
 
-  // recognition + audio meter
+  // --- State ---
+  let sentences = [];            // [{idx,text,norm}]
+  let activeIdx = -1;
+  let fuse = null;
+
   let rec = null, listening = false, recent = "";
   let audioStream = null, audioCtx = null, analyser = null, dataArray = null;
   let currentDeviceId = null;
 
+  let ttsVoices = [];
+  let needResumeRec = false;
+
   const MAX_BUF = 260;
-  const SIM_THRESHOLD = 0.30; // >= 30%
+  const SIM_THRESHOLD = 0.30;
 
   // --- Utils ---
   const norm = (s)=> (s||"").toLowerCase()
@@ -47,7 +53,7 @@
     const t = text.replace(/\r\n/g,"\n").replace(/\n+/g," ").trim();
     if (!t) return [];
     const parts = t.split(/(?<=[\.!\?！\?。…])\s+/u);
-    if (parts.length===1){ // fallback chunking
+    if (parts.length===1){ // fallback
       const res=[]; let s=t; const CH=80;
       while(s.length>0){ res.push(s.slice(0,CH)); s=s.slice(CH); }
       return res;
@@ -145,7 +151,6 @@
 
   // ---------- Device picker ----------
   async function ensurePermission(){
-    // 첫 1회 권한 요청(라벨 표시를 위해)
     try {
       const tmp = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       tmp.getTracks().forEach(t=>t.stop());
@@ -173,7 +178,7 @@
       micSelect.value = exists ? prev : (mics[0]?.deviceId || "");
     }
 
-    currentDeviceId = (micSelect && micSelect.value) ? micSelect.value : null;
+    currentDeviceId = micSelect?.value || null;
   }
 
   micSelect?.addEventListener("change", async ()=>{
@@ -185,7 +190,7 @@
     await listMics();
   });
 
-  // --------- Audio Meter from chosen device ---------
+  // --------- Audio Meter (selected device) ---------
   const proConstraints = (deviceId)=>({
     audio: {
       deviceId: deviceId ? { exact: deviceId } : undefined,
@@ -343,7 +348,7 @@
     try{ rec&&rec.stop(); }catch{}
   }
 
-  // --- Events ---
+  // --- Events: recognition ---
   btnStart.addEventListener("click", start);
   btnStop.addEventListener("click", stop);
 
@@ -351,6 +356,138 @@
     if (e.code==="Space"){ e.preventDefault(); listening? stop(): start(); }
     else if (e.code==="ArrowDown"){ if (activeIdx+1 < sentences.length) setActive(activeIdx+1); }
     else if (e.code==="ArrowUp"){ if (activeIdx-1 >= 0) setActive(activeIdx-1); }
+  });
+
+  // --------- TTS (Web Speech Synthesis) ----------
+  function populateVoices(){
+    if (!("speechSynthesis" in window) || !voiceSelect) return;
+    const all = speechSynthesis.getVoices();
+    ttsVoices = all.filter(v => (v.lang||"").toLowerCase().startsWith("ko") || (v.lang||"").toLowerCase().startsWith("en"));
+    const prev = voiceSelect.value;
+    voiceSelect.innerHTML = "";
+    if (!ttsVoices.length){
+      const opt = document.createElement("option");
+      opt.textContent = "사용 가능한 음성이 없습니다";
+      voiceSelect.appendChild(opt);
+      return;
+    }
+    ttsVoices.forEach((v, i)=>{
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = `${v.name} (${v.lang})${v.default ? " — 기본":""}`;
+      voiceSelect.appendChild(opt);
+    });
+    if (prev && Number(prev) < ttsVoices.length) voiceSelect.value = prev;
+    else {
+      const ko = ttsVoices.findIndex(v => (v.lang||"").toLowerCase().startsWith("ko"));
+      voiceSelect.value = String(ko >= 0 ? ko : 0);
+    }
+  }
+  if ("speechSynthesis" in window){
+    populateVoices();
+    window.speechSynthesis.onvoiceschanged = populateVoices;
+  }
+
+  function currentVoice(){
+    if (!ttsVoices.length || !voiceSelect) return null;
+    const idx = Number(voiceSelect.value || 0);
+    return ttsVoices[idx] || ttsVoices[0];
+  }
+
+  function speakText(text, {onend} = {}){
+    if (!("speechSynthesis" in window)){
+      alert("이 브라우저는 음성합성을 지원하지 않습니다.");
+      return;
+    }
+    const u = new SpeechSynthesisUtterance(text);
+    const v = currentVoice();
+    if (v) u.voice = v;
+    u.lang = v?.lang || "ko-KR";
+    u.rate = Number(rateRange?.value || 1.0); // 0.5~1.4
+    u.pitch = 1.0;
+    u.onend = ()=>{ onend && onend(); };
+    window.speechSynthesis.speak(u);
+  }
+
+  function stopTTS(){
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+  }
+  function pauseTTS(){
+    if (!("speechSynthesis" in window)) return;
+    try{ window.speechSynthesis.pause(); }catch{}
+  }
+  function resumeTTS(){
+    if (!("speechSynthesis" in window)) return;
+    try{ window.speechSynthesis.resume(); }catch{}
+  }
+
+  function speakFrom(idx){
+    if (!sentences.length || idx < 0 || idx >= sentences.length) return;
+
+    // 낭독 중에는 인식 잠시 중단
+    if (listening){
+      needResumeRec = true;
+      stop();
+    }
+
+    setActive(idx);
+    const text = sentences[idx].text;
+
+    speakText(text, {
+      onend: ()=>{
+        const nextIdx = idx + 1;
+        if (nextIdx < sentences.length){
+          speakFrom(nextIdx);
+        }else{
+          if (needResumeRec){
+            needResumeRec = false;
+            // 자동 재개를 원하면 주석 해제
+            // start();
+          }
+        }
+      }
+    });
+  }
+
+  function speakCurrentOnce(){
+    if (!sentences.length) return;
+    const i = activeIdx >= 0 ? activeIdx : 0;
+
+    if (listening){
+      needResumeRec = true;
+      stop();
+    }
+    setActive(i);
+    speakText(sentences[i].text, {
+      onend: ()=>{
+        if (needResumeRec){
+          needResumeRec = false;
+          // 자동 재개를 원하면 주석 해제
+          // start();
+        }
+      }
+    });
+  }
+
+  // --- Events: TTS ---
+  rateRange?.addEventListener("input", ()=>{
+    if (rateVal) rateVal.textContent = `${Number(rateRange.value).toFixed(1)}x`;
+  });
+  btnSpeakCurrent?.addEventListener("click", speakCurrentOnce);
+  btnSpeakAll?.addEventListener("click", ()=>{
+    const startIdx = (activeIdx >= 0 ? activeIdx : 0);
+    speakFrom(startIdx);
+  });
+  btnTtsPause?.addEventListener("click", pauseTTS);
+  btnTtsResume?.addEventListener("click", resumeTTS);
+  btnTtsStop?.addEventListener("click", ()=>{
+    stopTTS();
+    if (needResumeRec){
+      needResumeRec = false;
+      // 원하면 자동 재개
+      // start();
+    }
   });
 
   // PWA
@@ -370,6 +507,9 @@
     } catch(e) {
       console.warn(e);
     }
+    // 초기 상태표시
+    recDot.className = "dot ok";
+    recState.textContent = "대기";
   })();
 
 })();
